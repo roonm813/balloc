@@ -1,3 +1,4 @@
+make clean 
 make 
 
 #idx = (1 2 3)
@@ -6,4 +7,4 @@ make
 #	printf "===== test[%d] debug result ====\n" "${idx}" 
 
 cat test*.out
-make clean 
+#make clean 

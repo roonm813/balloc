@@ -20,7 +20,7 @@ typedef struct block{
 
 //#define mdebug //debug 
 #define mdebug debug
-#define debug //debug
+//#define debug //debug
 #define PAGE_TRIM_SZ(size) (((size)%(PAGE_SZ)) ? (((size)&(0xfffffffffffff000)) + PAGE_SZ) : (size))
 
 #define PAGE_SZ 0x1000
@@ -28,10 +28,10 @@ typedef struct block{
 #define EMPTY NULL
 
 #define F_BIN_START_SZ 0x20 
-#define F_BIN_COUNT 7
+#define F_BIN_COUNT 50
 #define F_BIN_INTERVAL 0x10 
 
-#define S_BIN_START_SZ 0x90 
+#define S_BIN_START_SZ 0x410 
 #define S_BIN_COUNT 50 
 #define S_BIN_INERVAL 0x10 
 
@@ -51,6 +51,7 @@ BLK* largeBins = EMPTY;
 
 BLK* unsortedBins = EMPTY; 
 BLK* unsortedBinsEnd = EMPTY; 
+long long unsortMaxSize = 0; 
 
 uint8_t leftSize; 
 void* allocStartPtr; 
@@ -94,8 +95,12 @@ void* allocFromFast(size_t index){
 //		dumpFast(i); 
 	BLK* newAllocPtr = fastBins[index]; 
 	fastBins[index] = fastBins[index]->next;
+
+	int size = F_IDX_2_SZ(index); 
+	newAllocPtr->size = size; 
+	*(size_t*)(((void*)newAllocPtr)+F_IDX_2_SZ(index)) = size|0x1; 
 	mdebug ("  alloc fastBins[%d] \t: 0x%p\n", index, newAllocPtr); 
-	return newAllocPtr; 
+	return (void*)newAllocPtr; 
 }
 
 
@@ -104,6 +109,83 @@ void* allocFromSmall(size_t index){
 	smallBins[index] = smallBins[index]->next; 
 	debug("  alloc smallBins[%d] : %u \n", index, newAllocPtr); 
 	return newAllocPtr + BLK_HEADER_SZ; 
+}
+
+void unlink(BLK* block){
+	/*debug ("  unlink block at 0x%x\n", block); 
+	dumpChunk(block);*/ 
+	if(block == unsortedBins) {
+		unsortedBins = block->next;
+		block->prev = EMPTY; 
+	}
+	else if(block == unsortedBinsEnd){
+		block->prev->next = EMPTY; 
+		unsortedBinsEnd = block->prev; 
+	}
+	else{
+		block->prev->next = block->next; 
+		block->next->prev = block->prev; 
+	}
+	//debug("  [+](in unlink)"); dumpUnsorted(); 
+	return; 
+}
+
+void* allocFromUnsorted(size_t size){
+	debug("  alloc from Unsorted bins\n"); 
+	debug("  [+]"); dumpUnsorted(); 
+	BLK* here = unsortedBins; 
+	void* newAllocPtr; 
+	size_t totalSize;
+	BLK* leftPtr; 
+	size_t leftSize; 
+	while(here != EMPTY){
+		if((here->size) >= size){
+			newAllocPtr = here; 
+			totalSize = *(size_t*)(newAllocPtr+BLK_SZ_IDX); 
+			leftPtr = (void*)here + size; 
+			leftSize = totalSize - size; 
+			break; 
+		}
+		here = here->next; 
+	}
+	if(here ==  EMPTY) {
+		debug("  => nothing is in unsorted \n"); 
+		return EMPTY; 
+	}
+	else if(leftSize < F_BIN_START_SZ){
+		debug("  => find one! but left size is so small, so just give all\n"); 
+		unlink(newAllocPtr); 
+		*(size_t*)(newAllocPtr + totalSize) = size|0x1; 
+		debug ("  [+]"); dumpUnsorted(); 
+		return newAllocPtr; 
+	}
+	else if(leftSize < S_BIN_START_SZ){ //split to fast bin 
+		debug("  => find one! and tryiny to split -> fastbins\n"); 
+		unlink(newAllocPtr); 
+		*(size_t*)(newAllocPtr + size) = size|0x1; 
+		((BLK*)newAllocPtr)->size = size; 
+		leftPtr->size = leftSize; 
+		mdebug(" asdfasdf %p %x \n", (void*)leftPtr + leftSize , leftSize&0xfffffffffffffffe); 
+		*(size_t*)(((void*)leftPtr) + leftSize) = leftSize&0xfffffffffffffffe; 
+		insertFastBins(F_SZ_2_IDX(leftSize), leftPtr); 
+		debug("  [+] "); dumpUnsorted(); 
+		return newAllocPtr; 
+	}
+	else{//just split 
+		debug("  => just split -> unsorted\n"); 
+		unlink(newAllocPtr); 
+		((BLK*)newAllocPtr)->size = size; 
+		*(size_t*)(newAllocPtr + size) = size|0x1;
+		((BLK*)newAllocPtr)->next = leftPtr; 
+		leftPtr->size = leftSize; 
+		*(size_t*)((void*)leftPtr + leftSize) = leftSize&0xfffffffffffffffe; 
+		insertUnsortedBins(leftSize, leftPtr); 
+		debug("  [+] "); dumpUnsorted(); 
+		debug("  [+] alloc \n"); dumpChunk(newAllocPtr); 
+		debug("  [+] left \n"); dumpChunk(leftPtr); 
+		return newAllocPtr; 
+	}
+	return EMPTY;
 }
 
 void dumpFast(size_t index){
@@ -121,18 +203,20 @@ void dumpUnsorted(){
 	debug ("unsorted Bins : "); 
 	BLK* here = unsortedBins; 
 	while(here != EMPTY){
-		debug ("%p -> ", here); 
-		here = here -> next; 
+		debug ("0x%x(0x%x) -> ", here, here->size); 
+//		dumpChunk(here); 
+		here = (here -> next); 
 	}
+	debug("END\n"); 
 	return; 
 }
 
-void dumpChunk(void* ptr){
+void dumpChunk(BLK* ptr){
 	mdebug("[+] dumpChunk at 0x%x -----------------\n", ptr); 
-	mdebug("  prevSize :\t 0x%x\n", *(size_t*) (ptr + BLK_PREV_SZ_IDX));
-	mdebug("  size :    \t 0x%x\n", *(size_t*) (ptr+ BLK_SZ_IDX)); 
-	mdebug("  prev :    \t 0x%p\n", ptr + BLK_PREV_IDX); 
-	mdebug("  next :    \t 0x%p\n", ptr + BLK_NEXT_IDX); 
+	mdebug("  prevSize :\t 0x%x\n", ptr->prevSize);
+	mdebug("  size :    \t 0x%x\n", ptr->size); 
+	mdebug("  prev :    \t 0x%p\n", ptr->prev); 
+	mdebug("  next :    \t 0x%p\n", ptr->next); 
 	mdebug("---------------------------------------\n"); 
 }
 
@@ -159,13 +243,15 @@ void *myalloc(size_t size)
 		mdebug("  fastbin is not empty, goto fastbin now\n"); 
 		newAllocPtr =  allocFromFast(idx);
 	}
-	else{
+	else if((unsortMaxSize < size) || ((newAllocPtr = allocFromUnsorted(size)) == EMPTY)){ 
 		mdebug("  malloc from top chunk\n"); 
 		newAllocPtr = myInternalSbrk(size); 
+		*(size_t*)(newAllocPtr + BLK_SZ_IDX) = size; 
+		*(size_t*)(newAllocPtr + size ) = size|0x1;
 		mdebug("  alloc in    \t 0x%p\n", newAllocPtr + BLK_HEADER_SZ); 
 	}
-	*(size_t*)(newAllocPtr + BLK_SZ_IDX) = size; 
-	*(size_t*)(newAllocPtr + size ) = size|0x1;
+//	*(size_t*)(newAllocPtr + BLK_SZ_IDX) = size; 
+//	*(size_t*)(newAllocPtr + size ) = size|0x1;
 	mdebug ( "  set prevSize\t*0x%p = 0x%x\n", newAllocPtr + BLK_SZ_IDX, size); 
 	mdebug ( "  set size    \t*0x%p = 0x%x\n", newAllocPtr + size, size|0x1); 
 	mdebug ("========================================================\n\n"); 
@@ -195,26 +281,39 @@ void insertFastBins(size_t index, BLK* startBlock){
 	//for(int i = 0; i < F_BIN_COUNT; i++) 
 	//	dumpFast(i); 
 	mdebug("  insert into fastBins[%d]_size(0x%x)\n", index, F_IDX_2_SZ(index)); 
-	dumpChunk(startBlock); 
+	//dumpChunk(startBlock); 
 	if(fastBins[index] != EMPTY) {
-		startBlock->next = fastBins[index]->next; 
+		startBlock->next = fastBins[index]; 
 	}
 	else 
 		startBlock->next = EMPTY; 
 	fastBins[index] = startBlock; 
+//	for(int i = 0; i < F_BIN_COUNT;i++) 
+//		dumpFast(i); 
 }
+
 
 void insertUnsortedBins(size_t size, BLK* startBlock){
 	mdebug("  insert into UnsortedBins size(0x%x) ptr(0x%p)\n", size, startBlock); 
-	dumpChunk(startBlock); 
+	if(unsortMaxSize < size) 
+		unsortMaxSize = size; 
+	//dumpChunk(startBlock); 
 	if(unsortedBins != EMPTY){ //not first Insert; 
-		startBlock->next = unsortedBins->next; 
+	//	mdebug("  this block => next(0x%p)\n", unsortedBins->next); 
+		startBlock->next = unsortedBins; 
+		unsortedBins->prev = startBlock; 
 	}
 	else {//fisrt insert 
-		unsortedBins_end = startBlock; 
+		mdebug("  WELCOME! unsortedBIns firstinput\n"); 
+		unsortedBinsEnd = startBlock; 
 		startBlock->next = EMPTY; 
 	}
 	unsortedBins = startBlock; 
+	unsortedBins->prev = EMPTY; 
+//	debug("asdfasdfasdfasfd"); 
+	if(unsortedBins->next != EMPTY)
+		dumpChunk(unsortedBins->next); 
+	//dumpUnsorted(); 
 	//need merging process 
 	return; 
 }

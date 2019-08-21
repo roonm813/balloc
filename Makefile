@@ -1,5 +1,5 @@
 NM=nm
-CFLAGS=-g -Os -fPIC -fno-stack-protector -Wall -Wno-unused-result -U_FORTIFY_SOURCE
+CFLAGS=-g -w -Os -fPIC -fno-stack-protector -Wall -Wno-unused-result -U_FORTIFY_SOURCE
 
 .PHONY: clean test
 
