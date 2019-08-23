@@ -19,8 +19,6 @@ typedef struct block{
 #define BLK_PREV_IDX 16 
 #define BLK_NEXT_IDX 24 
 
-#define tdebug //
-//#define tdebug debug 
 #define mdebug //debug
 //#define mdebug debug
 #define debug //debug
@@ -62,7 +60,7 @@ void* allocBackupPtr;
 uint8_t setting = 0; 
 
 
-inline void initSet(){
+void initSet(){
 	allocStartPtr = sbrk(PAGE_SZ);
 	allocBackupPtr = allocStartPtr + PAGE_SZ;
    	leftSize = PAGE_SZ;
@@ -76,7 +74,7 @@ void error(const char * errmsg){
 }
 
 
-inline void* myInternalSbrk(size_t size){
+void* myInternalSbrk(size_t size){
 	if(!setting){
 		initSet();
 	  	setting = 1;
@@ -92,7 +90,7 @@ inline void* myInternalSbrk(size_t size){
 	return newAlloc;
 }
 
-inline void* allocFromFast(size_t index){
+void* allocFromFast(size_t index){
 	BLK* newAllocPtr = fastBins[index]; 
 	fastBins[index] = fastBins[index]->next;
 
@@ -112,7 +110,8 @@ void* allocFromSmall(size_t index){
 	return newAllocPtr + BLK_HEADER_SZ; 
 }
 
-inline void unlink(BLK* block){
+
+void unlink(BLK* block){
 	//debug ("  unlink block at 0x%x\n", block); 
 	//dumpChunk(block);*/ 
 	if(block == unsortedBins && block == unsortedBinsEnd){
@@ -136,7 +135,7 @@ inline void unlink(BLK* block){
 	return; 
 }
 
-inline void setBlockSize(BLK* block, size_t size, int inUsed){
+void setBlockSize(BLK* block, size_t size, int inUsed){
 	block->size = size;
 	if(inUsed){ 
 		*(size_t*)(((void*)block) + size) = size|0x1; 
@@ -148,11 +147,9 @@ inline void setBlockSize(BLK* block, size_t size, int inUsed){
 
 void* allocFromUnsorted(size_t size){
 	debug("  alloc from Unsorted bins\n"); 
-	clock_t before; 
-	before = clock(); 
 	//debug("  start unsorted bins 0x%x\n", unsortedBins); 
 	//debug("  end unsorted bins   0x%x\n", unsortedBinsEnd); 
-	//debug("  [+]"); dumpUnsorted(); 
+	debug("  [+]"); dumpUnsorted(); 
 	//mdebug("  [+]"); dumpReverseUnsorted(); 
 	BLK* here = unsortedBinsEnd;
 	
@@ -171,18 +168,18 @@ void* allocFromUnsorted(size_t size){
 			leftSize = totalSize - size; 
 			break; 
 		}
-		count ++; 
+		//count ++;
+	       	//debug("count : %d \n", count); 	
 		here = here->prev; 
-		if(count > 200) {
+		/*if(count >20) {
 		// 	debug("adsfasdfasf"); 
 			here = EMPTY; 
 			break; 
-		}
+		}*/
 	}
 	//debug("out asdf : 0x%x\n", here); 
 	if(here ==  EMPTY) {
 		debug("  => nothing is in unsorted \n"); 
-		tdebug("  time : %f\n", (double)(clock()-before)); 
 		return EMPTY; 
 	}
 	else if(leftSize < F_BIN_START_SZ){
@@ -190,7 +187,6 @@ void* allocFromUnsorted(size_t size){
 		unlink(newAllocPtr); 
 		*(size_t*)(newAllocPtr + totalSize) = size|0x1; 
 		//mdebug ("  [+]"); dumpUnsorted(); 
-		tdebug("  time : %f\n", (double)(clock()-before)); 
 		return newAllocPtr; 
 	}
 	else if(leftSize < S_BIN_START_SZ){ //split to fast bin 
@@ -203,7 +199,6 @@ void* allocFromUnsorted(size_t size){
 		setBlockSize(leftPtr, leftSize, 0); 
 		unlink(newAllocPtr); 
 		insertFastBins(F_SZ_2_IDX(leftSize), leftPtr); 
-		tdebug("  time : %f\n", (double)(clock()-before)); 
 		//mdebug("  [+] "); dumpUnsorted(); 
 		return newAllocPtr; 
 	}
@@ -211,18 +206,20 @@ void* allocFromUnsorted(size_t size){
 		debug("  => just split -> unsorted\n"); 
 	//	unlink(newAllocPtr);
 		setBlockSize(newAllocPtr, size, 1); 
+//		dumpChunk(newAllocPtr); 
 		setBlockSize(leftPtr, leftSize, 0);
+//		dumpChunk(leftPtr); 
 		leftPtr->next = ((BLK*)newAllocPtr)->next; 
 		leftPtr->prev = newAllocPtr; 
 		((BLK*)newAllocPtr)->next = leftPtr;
-
+		
+		dumpChunk(newAllocPtr); 
+		dumpChunk(leftPtr); 
 		if(leftPtr->next != EMPTY) leftPtr->next->prev = leftPtr; 
 		if(newAllocPtr == unsortedBinsEnd) unsortedBinsEnd = leftPtr; 	
 		unlink(newAllocPtr); 
-		tdebug("  time : %f\n", (double)(clock()-before)); 
 		return newAllocPtr; 
 	}
-		tdebug("  time : %f\n", (double)(clock()-before)); 
 	return EMPTY;
 }
 
@@ -316,7 +313,7 @@ void *myrealloc(void *ptr, size_t size)
 }
 
 
-inline void insertFastBins(size_t index, BLK* startBlock){
+void insertFastBins(size_t index, BLK* startBlock){
 	debug("  insert into fastBins[%d]_size(0x%x)\n", index, F_IDX_2_SZ(index)); 
 	if(fastBins[index] != EMPTY) {
 		startBlock->next = fastBins[index]; 
@@ -327,11 +324,20 @@ inline void insertFastBins(size_t index, BLK* startBlock){
 }
 
 
-inline void insertUnsortedBins(size_t size, BLK* startBlock){
+void insertUnsortedBins(size_t size, BLK* startBlock){
 	debug("  insert into UnsortedBins size(0x%x) ptr(0x%p)\n", size, startBlock); 
+	debug("  [+] before "); dumpUnsorted(); 
 	if(unsortMaxSize < size) 
 		unsortMaxSize = size; 
 	if(unsortedBins != EMPTY){ //not first Insert; 
+		if((startBlock->prevSize & 0x1) == 0 && startBlock->prevSize >= S_BIN_START_SZ){
+			mdebug("merging at \n");
+	            	BLK* prevBlock = (void*)startBlock - startBlock->prevSize;
+	       	 	setBlockSize(prevBlock, prevBlock->size + size, 0);
+			dumpChunk(prevBlock); 
+			debug("  [+] after "); dumpUnsorted(); 
+			return; 
+		}
 		startBlock->next = unsortedBins; 
 		unsortedBins->prev = startBlock; 
 	}
@@ -342,6 +348,7 @@ inline void insertUnsortedBins(size_t size, BLK* startBlock){
 	}
 	unsortedBins = startBlock; 
 	unsortedBins->prev = EMPTY; 
+	debug("  [+] after "); dumpUnsorted(); 
 	return; 
 }
 
@@ -361,7 +368,7 @@ void myfree(void *ptr){
 	mdebug("  this chunk size \t*0x%p = 0x%x\n", prevSizePtr + BLK_SZ_IDX, size); 
 	if(size < F_BIN_START_SZ ) 
 		error("in myfree(), too small chunk, this size is not possible!"); 
-    else if(size < S_BIN_START_SZ) {//fast bins 
+    	else if(size < S_BIN_START_SZ) {//fast bins 
 		insertFastBins(F_SZ_2_IDX(size), prevSizePtr); 
 	}
 	else{ //unsorted bin
