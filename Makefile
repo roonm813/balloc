@@ -14,8 +14,9 @@ test: replay
 	$(call run_test,./$<,test1,1000)
 	$(call run_test,./$<,test2,1000)
 	$(call run_test,./$<,test3,20)
+	$(call run_test,./$<,test4,20)
 
-replay: basic_alloc.c main.c printf.c
+replay: alloc.c main.c printf.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
